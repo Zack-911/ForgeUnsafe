@@ -6,8 +6,7 @@ export default new NativeFunction({
     aliases: ['$listAllocations'],
     description: 'Return a JSON array of all live allocations with their pointer address, size, and tag.',
     version: '1.0.0',
-    brackets: false,
-    unwrap: true,
+    unwrap: false,
     output: ArgType.Json,
     execute(_ctx: any) {
         return this.success(native.unsafeListAllocations())
