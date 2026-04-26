@@ -19,17 +19,44 @@ function loadAddon(): NativeAddon {
         return require(process.env.FORGEUNSAFE_ADDON)
     }
 
-    // 2. Platform-specific napi-rs triple name
-    const platform = process.platform   // linux, darwin, win32
-    const arch     = process.arch       // x64, arm64, ia32
-    const triple   = `${platform}-${arch}`
+    // 2. Build napi-rs platform triple
+    //    Linux uses an ABI suffix (-gnu / -musl); darwin and win32 do not.
+    const platform = process.platform   // linux | darwin | win32
+    const arch     = process.arch       // x64 | arm64 | ia32 | arm
+
+    function getTriple(): string {
+        if (platform === 'linux') {
+            // detect musl vs glibc
+            try {
+                const { execSync } = require('child_process')
+                const out = execSync('ldd --version 2>&1').toString()
+                return out.includes('musl') ? `linux-${arch}-musl` : `linux-${arch}-gnu`
+            } catch {
+                return `linux-${arch}-gnu`
+            }
+        }
+        return `${platform}-${arch}`
+    }
+
+    const triple = getTriple()
+
+    // __dirname is <project>/dist/structures when running compiled output,
+    // so go up two levels to reach the project root where copy-addon.js
+    // places the .node file.
+    const projectRoot = path.resolve(__dirname, '..', '..')
+    const distRoot    = path.resolve(__dirname, '..')
 
     const candidates = [
-        path.join(__dirname, '..', `forgeunsafe.${triple}.node`),
-        path.join(__dirname, '..', 'forgeunsafe.node'),
-        path.join(__dirname, '..', 'rust', 'target', 'release', 'libforgeunsafe.so'),
-        path.join(__dirname, '..', 'rust', 'target', 'release', 'forgeunsafe.dll'),
-        path.join(__dirname, '..', 'rust', 'target', 'release', 'libforgeunsafe.dylib'),
+        // project root (primary — where copy-addon.js puts the file)
+        path.join(projectRoot, `forgeunsafe.${triple}.node`),
+        path.join(projectRoot, 'forgeunsafe.node'),
+        // dist root (in case someone copies it there)
+        path.join(distRoot, `forgeunsafe.${triple}.node`),
+        path.join(distRoot, 'forgeunsafe.node'),
+        // raw Rust build output (dev convenience)
+        path.join(projectRoot, 'rust', 'target', 'release', 'libforgeunsafe.so'),
+        path.join(projectRoot, 'rust', 'target', 'release', 'forgeunsafe.dll'),
+        path.join(projectRoot, 'rust', 'target', 'release', 'libforgeunsafe.dylib'),
     ]
 
     for (const candidate of candidates) {
