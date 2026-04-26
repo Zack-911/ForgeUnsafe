@@ -1,0 +1,52 @@
+{
+  "name": "@tryforge/forge.unsafe",
+  "version": "1.0.0",
+  "description": "Real native memory management for ForgeScript via napi-rs — malloc, free, pointer arithmetic, typed reads/writes.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "rust/src", "rust/Cargo.toml", "rust/build.rs", "npm"],
+  "scripts": {
+    "build:rust": "cd rust && cargo build --release && node scripts/copy-addon.js",
+    "build:ts": "tsc -p tsconfig.json",
+    "build": "npm run build:rust && npm run build:ts",
+    "dev": "ts-node src/__tests__/index.ts",
+    "artifacts": "napi artifacts",
+    "prepublishOnly": "npm run build"
+  },
+  "napi": {
+    "name": "forgeunsafe",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc",
+        "i686-pc-windows-msvc",
+        "armv7-unknown-linux-gnueabihf",
+        "aarch64-linux-android",
+        "x86_64-unknown-freebsd"
+      ]
+    }
+  },
+  "keywords": [
+    "forgescript",
+    "forge",
+    "napi",
+    "unsafe",
+    "memory",
+    "pointer",
+    "rust"
+  ],
+  "license": "GPL-3.0-or-later",
+  "peerDependencies": {
+    "@tryforge/forgescript": "*"
+  },
+  "devDependencies": {
+    "@tryforge/forgescript": "*",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {}
+}

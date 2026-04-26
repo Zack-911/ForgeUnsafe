@@ -1,0 +1,6 @@
+node_modules/
+dist/
+rust/target/
+*.node
+.env
+forge_commit_history.sh
