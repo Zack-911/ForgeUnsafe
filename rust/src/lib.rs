@@ -23,8 +23,7 @@ struct AllocEntry {
     tag: Option<String>, // optional user label
 }
 
-static REGISTRY: Lazy<Mutex<HashMap<u64, AllocEntry>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static REGISTRY: Lazy<Mutex<HashMap<u64, AllocEntry>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 // ─── Pointer encoding ─────────────────────────────────────────────────────────
 //
@@ -41,15 +40,26 @@ fn decode_ptr(s: &str) -> napi::Result<*mut u8> {
         .map_err(|_| napi::Error::from_reason(format!("Invalid pointer: {:?}", s)))
 }
 
-fn registry_get(addr: u64) -> napi::Result<()> {
+fn check_access(addr: u64, len: u64) -> napi::Result<()> {
     let reg = REGISTRY.lock().unwrap();
-    if !reg.contains_key(&addr) {
-        return Err(napi::Error::from_reason(format!(
-            "0x{:x} is not a known allocation (use-after-free or invalid pointer)",
-            addr
-        )));
+    for (start_addr, entry) in reg.iter() {
+        let size = entry.layout.size() as u64;
+        let end_addr = *start_addr + size;
+        if addr >= *start_addr && addr < end_addr {
+            if addr + len <= end_addr {
+                return Ok(());
+            } else {
+                return Err(napi::Error::from_reason(format!(
+                    "Out-of-bounds: Access at 0x{:x} (size {}) exceeds allocation boundaries (starts at 0x{:x}, size {})",
+                    addr, len, *start_addr, size
+                )));
+            }
+        }
     }
-    Ok(())
+    Err(napi::Error::from_reason(format!(
+        "Invalid pointer: 0x{:x} does not belong to any live allocation (use-after-free or invalid pointer)",
+        addr
+    )))
 }
 
 // ─── Allocation ───────────────────────────────────────────────────────────────
@@ -61,8 +71,8 @@ pub fn unsafe_malloc(size: u32) -> napi::Result<String> {
     if size == 0 {
         return Err(napi::Error::from_reason("Cannot allocate 0 bytes"));
     }
-    let layout = Layout::array::<u8>(size as usize)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let layout =
+        Layout::array::<u8>(size as usize).map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     let ptr = unsafe { alloc(layout) };
     if ptr.is_null() {
@@ -70,7 +80,10 @@ pub fn unsafe_malloc(size: u32) -> napi::Result<String> {
     }
 
     let addr = ptr as u64;
-    REGISTRY.lock().unwrap().insert(addr, AllocEntry { layout, tag: None });
+    REGISTRY
+        .lock()
+        .unwrap()
+        .insert(addr, AllocEntry { layout, tag: None });
 
     Ok(encode_ptr(ptr))
 }
@@ -81,8 +94,8 @@ pub fn unsafe_calloc(size: u32) -> napi::Result<String> {
     if size == 0 {
         return Err(napi::Error::from_reason("Cannot allocate 0 bytes"));
     }
-    let layout = Layout::array::<u8>(size as usize)
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let layout =
+        Layout::array::<u8>(size as usize).map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
     let ptr = unsafe { alloc_zeroed(layout) };
     if ptr.is_null() {
@@ -90,7 +103,10 @@ pub fn unsafe_calloc(size: u32) -> napi::Result<String> {
     }
 
     let addr = ptr as u64;
-    REGISTRY.lock().unwrap().insert(addr, AllocEntry { layout, tag: None });
+    REGISTRY
+        .lock()
+        .unwrap()
+        .insert(addr, AllocEntry { layout, tag: None });
 
     Ok(encode_ptr(ptr))
 }
@@ -100,7 +116,9 @@ pub fn unsafe_calloc(size: u32) -> napi::Result<String> {
 #[napi]
 pub fn unsafe_realloc(pointer: String, new_size: u32) -> napi::Result<String> {
     if new_size == 0 {
-        return Err(napi::Error::from_reason("Cannot reallocate to 0 bytes — use free instead"));
+        return Err(napi::Error::from_reason(
+            "Cannot reallocate to 0 bytes — use free instead",
+        ));
     }
 
     let old_ptr = decode_ptr(&pointer)?;
@@ -108,10 +126,7 @@ pub fn unsafe_realloc(pointer: String, new_size: u32) -> napi::Result<String> {
 
     let mut reg = REGISTRY.lock().unwrap();
     let entry = reg.remove(&old_addr).ok_or_else(|| {
-        napi::Error::from_reason(format!(
-            "0x{:x} is not a known allocation",
-            old_addr
-        ))
+        napi::Error::from_reason(format!("0x{:x} is not a known allocation", old_addr))
     })?;
 
     let new_layout = Layout::array::<u8>(new_size as usize)
@@ -123,7 +138,13 @@ pub fn unsafe_realloc(pointer: String, new_size: u32) -> napi::Result<String> {
     }
 
     let new_addr = new_ptr as u64;
-    reg.insert(new_addr, AllocEntry { layout: new_layout, tag: entry.tag });
+    reg.insert(
+        new_addr,
+        AllocEntry {
+            layout: new_layout,
+            tag: entry.tag,
+        },
+    );
 
     Ok(encode_ptr(new_ptr))
 }
@@ -136,10 +157,7 @@ pub fn unsafe_free(pointer: String) -> napi::Result<()> {
 
     let mut reg = REGISTRY.lock().unwrap();
     let entry = reg.remove(&addr).ok_or_else(|| {
-        napi::Error::from_reason(format!(
-            "Double-free or invalid pointer: 0x{:x}",
-            addr
-        ))
+        napi::Error::from_reason(format!("Double-free or invalid pointer: 0x{:x}", addr))
     })?;
 
     unsafe { dealloc(ptr, entry.layout) };
@@ -153,9 +171,9 @@ pub fn unsafe_free(pointer: String) -> napi::Result<()> {
 pub fn unsafe_tag(pointer: String, tag: String) -> napi::Result<()> {
     let addr = decode_ptr(&pointer)? as u64;
     let mut reg = REGISTRY.lock().unwrap();
-    let entry = reg.get_mut(&addr).ok_or_else(|| {
-        napi::Error::from_reason(format!("Unknown pointer 0x{:x}", addr))
-    })?;
+    let entry = reg
+        .get_mut(&addr)
+        .ok_or_else(|| napi::Error::from_reason(format!("Unknown pointer 0x{:x}", addr)))?;
     entry.tag = Some(tag);
     Ok(())
 }
@@ -167,18 +185,7 @@ pub fn unsafe_tag(pointer: String, tag: String) -> napi::Result<()> {
 pub fn unsafe_read(pointer: String, length: u32) -> napi::Result<Vec<u8>> {
     let ptr = decode_ptr(&pointer)?;
     let addr = ptr as u64;
-    registry_get(addr)?;
-
-    let reg = REGISTRY.lock().unwrap();
-    let entry = &reg[&addr];
-    if length as usize > entry.layout.size() {
-        return Err(napi::Error::from_reason(format!(
-            "Read of {} bytes exceeds allocation size of {} bytes",
-            length,
-            entry.layout.size()
-        )));
-    }
-    drop(reg);
+    check_access(addr, length as u64)?;
 
     Ok(unsafe { std::slice::from_raw_parts(ptr, length as usize).to_vec() })
 }
@@ -194,7 +201,7 @@ pub fn unsafe_read_string(pointer: String, length: u32) -> napi::Result<String> 
 #[napi]
 pub fn unsafe_read_u8(pointer: String) -> napi::Result<u32> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 1)?;
     Ok(unsafe { *ptr } as u32)
 }
 
@@ -202,7 +209,7 @@ pub fn unsafe_read_u8(pointer: String) -> napi::Result<u32> {
 #[napi]
 pub fn unsafe_read_u16(pointer: String) -> napi::Result<u32> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 2)?;
     Ok(u16::from_le_bytes(unsafe { *(ptr as *const [u8; 2]) }) as u32)
 }
 
@@ -210,7 +217,7 @@ pub fn unsafe_read_u16(pointer: String) -> napi::Result<u32> {
 #[napi]
 pub fn unsafe_read_u32(pointer: String) -> napi::Result<u32> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 4)?;
     Ok(u32::from_le_bytes(unsafe { *(ptr as *const [u8; 4]) }))
 }
 
@@ -218,7 +225,7 @@ pub fn unsafe_read_u32(pointer: String) -> napi::Result<u32> {
 #[napi]
 pub fn unsafe_read_i32(pointer: String) -> napi::Result<i32> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 4)?;
     Ok(i32::from_le_bytes(unsafe { *(ptr as *const [u8; 4]) }))
 }
 
@@ -226,7 +233,7 @@ pub fn unsafe_read_i32(pointer: String) -> napi::Result<i32> {
 #[napi]
 pub fn unsafe_read_i64(pointer: String) -> napi::Result<String> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 8)?;
     Ok(i64::from_le_bytes(unsafe { *(ptr as *const [u8; 8]) }).to_string())
 }
 
@@ -234,7 +241,7 @@ pub fn unsafe_read_i64(pointer: String) -> napi::Result<String> {
 #[napi]
 pub fn unsafe_read_f32(pointer: String) -> napi::Result<f64> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 4)?;
     Ok(f32::from_le_bytes(unsafe { *(ptr as *const [u8; 4]) }) as f64)
 }
 
@@ -242,7 +249,7 @@ pub fn unsafe_read_f32(pointer: String) -> napi::Result<f64> {
 #[napi]
 pub fn unsafe_read_f64(pointer: String) -> napi::Result<f64> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 8)?;
     Ok(f64::from_le_bytes(unsafe { *(ptr as *const [u8; 8]) }))
 }
 
@@ -253,18 +260,7 @@ pub fn unsafe_read_f64(pointer: String) -> napi::Result<f64> {
 pub fn unsafe_write(pointer: String, bytes: Vec<u8>) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
     let addr = ptr as u64;
-    registry_get(addr)?;
-
-    let reg = REGISTRY.lock().unwrap();
-    let entry = &reg[&addr];
-    if bytes.len() > entry.layout.size() {
-        return Err(napi::Error::from_reason(format!(
-            "Write of {} bytes exceeds allocation size of {} bytes",
-            bytes.len(),
-            entry.layout.size()
-        )));
-    }
-    drop(reg);
+    check_access(addr, bytes.len() as u64)?;
 
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
     Ok(())
@@ -280,7 +276,7 @@ pub fn unsafe_write_string(pointer: String, value: String) -> napi::Result<()> {
 #[napi]
 pub fn unsafe_write_u8(pointer: String, value: u32) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 1)?;
     unsafe { *ptr = value as u8 };
     Ok(())
 }
@@ -289,7 +285,7 @@ pub fn unsafe_write_u8(pointer: String, value: u32) -> napi::Result<()> {
 #[napi]
 pub fn unsafe_write_u16(pointer: String, value: u32) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 2)?;
     unsafe { *(ptr as *mut [u8; 2]) = (value as u16).to_le_bytes() };
     Ok(())
 }
@@ -298,7 +294,7 @@ pub fn unsafe_write_u16(pointer: String, value: u32) -> napi::Result<()> {
 #[napi]
 pub fn unsafe_write_u32(pointer: String, value: u32) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 4)?;
     unsafe { *(ptr as *mut [u8; 4]) = value.to_le_bytes() };
     Ok(())
 }
@@ -307,7 +303,7 @@ pub fn unsafe_write_u32(pointer: String, value: u32) -> napi::Result<()> {
 #[napi]
 pub fn unsafe_write_i32(pointer: String, value: i32) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 4)?;
     unsafe { *(ptr as *mut [u8; 4]) = value.to_le_bytes() };
     Ok(())
 }
@@ -316,7 +312,7 @@ pub fn unsafe_write_i32(pointer: String, value: i32) -> napi::Result<()> {
 #[napi]
 pub fn unsafe_write_i64(pointer: String, value: String) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 8)?;
     let v = value
         .parse::<i64>()
         .map_err(|_| napi::Error::from_reason(format!("Invalid i64: {}", value)))?;
@@ -328,7 +324,7 @@ pub fn unsafe_write_i64(pointer: String, value: String) -> napi::Result<()> {
 #[napi]
 pub fn unsafe_write_f32(pointer: String, value: f64) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 4)?;
     unsafe { *(ptr as *mut [u8; 4]) = (value as f32).to_le_bytes() };
     Ok(())
 }
@@ -337,7 +333,7 @@ pub fn unsafe_write_f32(pointer: String, value: f64) -> napi::Result<()> {
 #[napi]
 pub fn unsafe_write_f64(pointer: String, value: f64) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, 8)?;
     unsafe { *(ptr as *mut [u8; 8]) = value.to_le_bytes() };
     Ok(())
 }
@@ -349,8 +345,8 @@ pub fn unsafe_write_f64(pointer: String, value: f64) -> napi::Result<()> {
 pub fn unsafe_memcopy(src: String, dst: String, size: u32) -> napi::Result<()> {
     let src_ptr = decode_ptr(&src)?;
     let dst_ptr = decode_ptr(&dst)?;
-    registry_get(src_ptr as u64)?;
-    registry_get(dst_ptr as u64)?;
+    check_access(src_ptr as u64, size as u64)?;
+    check_access(dst_ptr as u64, size as u64)?;
     unsafe { std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, size as usize) };
     Ok(())
 }
@@ -360,8 +356,8 @@ pub fn unsafe_memcopy(src: String, dst: String, size: u32) -> napi::Result<()> {
 pub fn unsafe_memmove(src: String, dst: String, size: u32) -> napi::Result<()> {
     let src_ptr = decode_ptr(&src)?;
     let dst_ptr = decode_ptr(&dst)?;
-    registry_get(src_ptr as u64)?;
-    registry_get(dst_ptr as u64)?;
+    check_access(src_ptr as u64, size as u64)?;
+    check_access(dst_ptr as u64, size as u64)?;
     unsafe { std::ptr::copy(src_ptr, dst_ptr, size as usize) };
     Ok(())
 }
@@ -370,7 +366,7 @@ pub fn unsafe_memmove(src: String, dst: String, size: u32) -> napi::Result<()> {
 #[napi]
 pub fn unsafe_memset(pointer: String, value: u32, size: u32) -> napi::Result<()> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, size as u64)?;
     unsafe { std::ptr::write_bytes(ptr, value as u8, size as usize) };
     Ok(())
 }
@@ -380,8 +376,8 @@ pub fn unsafe_memset(pointer: String, value: u32, size: u32) -> napi::Result<()>
 pub fn unsafe_memcmp(a: String, b: String, size: u32) -> napi::Result<bool> {
     let ptr_a = decode_ptr(&a)?;
     let ptr_b = decode_ptr(&b)?;
-    registry_get(ptr_a as u64)?;
-    registry_get(ptr_b as u64)?;
+    check_access(ptr_a as u64, size as u64)?;
+    check_access(ptr_b as u64, size as u64)?;
     let sa = unsafe { std::slice::from_raw_parts(ptr_a, size as usize) };
     let sb = unsafe { std::slice::from_raw_parts(ptr_b, size as usize) };
     Ok(sa == sb)
@@ -411,9 +407,9 @@ pub fn unsafe_ptr_diff(a: String, b: String) -> napi::Result<String> {
 pub fn unsafe_alloc_size(pointer: String) -> napi::Result<u32> {
     let addr = decode_ptr(&pointer)? as u64;
     let reg = REGISTRY.lock().unwrap();
-    let entry = reg.get(&addr).ok_or_else(|| {
-        napi::Error::from_reason(format!("Unknown pointer 0x{:x}", addr))
-    })?;
+    let entry = reg
+        .get(&addr)
+        .ok_or_else(|| napi::Error::from_reason(format!("Unknown pointer 0x{:x}", addr)))?;
     Ok(entry.layout.size() as u32)
 }
 
@@ -433,10 +429,10 @@ pub fn unsafe_is_valid(pointer: String) -> bool {
 #[napi]
 pub fn unsafe_sizeof(type_name: String) -> napi::Result<u32> {
     match type_name.to_lowercase().as_str() {
-        "u8"  | "i8"  | "bool" | "byte" => Ok(1),
-        "u16" | "i16"                   => Ok(2),
-        "u32" | "i32" | "f32"           => Ok(4),
-        "u64" | "i64" | "f64" | "ptr"  => Ok(8),
+        "u8" | "i8" | "bool" | "byte" => Ok(1),
+        "u16" | "i16" => Ok(2),
+        "u32" | "i32" | "f32" => Ok(4),
+        "u64" | "i64" | "f64" | "ptr" => Ok(8),
         other => Err(napi::Error::from_reason(format!("Unknown type: {}", other))),
     }
 }
@@ -447,7 +443,7 @@ pub fn unsafe_sizeof(type_name: String) -> napi::Result<u32> {
 #[napi]
 pub fn unsafe_hex_dump(pointer: String, length: u32) -> napi::Result<String> {
     let ptr = decode_ptr(&pointer)?;
-    registry_get(ptr as u64)?;
+    check_access(ptr as u64, length as u64)?;
 
     let bytes = unsafe { std::slice::from_raw_parts(ptr, length as usize) };
     let mut out = String::new();
@@ -460,18 +456,28 @@ pub fn unsafe_hex_dump(pointer: String, length: u32) -> napi::Result<String> {
         // Hex bytes
         for (i, b) in chunk.iter().enumerate() {
             out.push_str(&format!("{:02x} ", b));
-            if i == 7 { out.push(' '); }
+            if i == 7 {
+                out.push(' ');
+            }
         }
         // Pad last line
         if chunk.len() < 16 {
             let pad = 16 - chunk.len();
-            for _ in 0..pad { out.push_str("   "); }
-            if chunk.len() <= 8 { out.push(' '); }
+            for _ in 0..pad {
+                out.push_str("   ");
+            }
+            if chunk.len() <= 8 {
+                out.push(' ');
+            }
         }
 
         out.push_str(" |");
         for &b in chunk {
-            out.push(if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' });
+            out.push(if b.is_ascii_graphic() || b == b' ' {
+                b as char
+            } else {
+                '.'
+            });
         }
         out.push_str("|\n");
     }
@@ -490,7 +496,10 @@ pub fn unsafe_list_allocations() -> String {
                 r#"{{"ptr":"{}","size":{},"tag":{}}}"#,
                 addr,
                 entry.layout.size(),
-                entry.tag.as_ref().map_or("null".into(), |t| format!("\"{}\"", t))
+                entry
+                    .tag
+                    .as_ref()
+                    .map_or("null".into(), |t| format!("\"{}\"", t))
             )
         })
         .collect();
