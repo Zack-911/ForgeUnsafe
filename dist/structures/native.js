@@ -61,9 +61,14 @@ function loadAddon() {
         if ((0, fs_1.existsSync)(candidate))
             return require(candidate);
     }
-    throw new Error(`[ForgeUnsafe] Could not find native addon. ` +
-        `Run \`npm run build:rust\` to compile it first, or set FORGEUNSAFE_ADDON to the .node file path.\n` +
-        `Searched:\n${candidates.map(c => `  ${c}`).join('\n')}`);
+    throw new Error(`[ForgeUnsafe] Could not find native addon.\n` +
+        `This extension requires a native binary. We tried searching in:\n` +
+        candidates.map(c => `  - ${c}`).join('\n') +
+        ` \n\n` +
+        `If you are using this as a dependency, try running:\n` +
+        `  node node_modules/forge.unsafe/scripts/install.js\n\n` +
+        `If you are developing locally, run:\n` +
+        `  npm run build:rust`);
 }
 // ─── Export singleton ─────────────────────────────────────────────────────────
 exports.native = loadAddon();
