@@ -56,15 +56,15 @@ jobs:
         run: pnpm install
 
       - name: Build
-        run: npx napi build --release --target ${{ matrix.settings.target }} --cargo-cwd rust
-        # Note: We use npx napi because @napi-rs/cli is likely not in devDeps yet, 
-        # or we can add it later.
+        run: |
+          npx napi build --release --target ${{ matrix.settings.target }} --cargo-cwd rust
+          ls -R .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: bindings-${{ matrix.settings.target }}
-          path: forgeunsafe.*.node
+          path: "**/*.node"
           if-no-files-found: error
 
   release:
