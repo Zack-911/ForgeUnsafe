@@ -56,7 +56,7 @@ jobs:
         run: pnpm install
 
       - name: Build
-        run: npx napi build --release --target ${{ matrix.settings.target }} --manifest-path rust/Cargo.toml
+        run: npx napi build --release --target ${{ matrix.settings.target }} --cargo-cwd rust
         # Note: We use npx napi because @napi-rs/cli is likely not in devDeps yet, 
         # or we can add it later.
 
