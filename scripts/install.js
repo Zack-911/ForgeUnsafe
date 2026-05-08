@@ -14,7 +14,7 @@ const { execSync } = require('child_process');
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-const REPO = 'tryforge/ForgeUnsafe';
+const REPO = 'Zack-911/ForgeUnsafe';
 const BINARY_NAME = 'forgeunsafe';
 const PACKAGE_JSON = require('../package.json');
 const VERSION = PACKAGE_JSON.version;
@@ -99,7 +99,7 @@ function download(url, dest) {
         });
 
         request.on('error', (err) => {
-            fs.unlink(dest, () => {}); // Clean up partial file
+            fs.unlink(dest, () => { }); // Clean up partial file
             reject(err);
         });
     });
@@ -112,7 +112,7 @@ download(url, destPath)
     .catch((err) => {
         console.error(`[install] Could not download binary: ${err.message}`);
         console.error(`[install] If you are a developer, run \`npm run build:rust\` to compile locally.`);
-        
+
         // We exit with 0 to prevent npm install from failing for users who might
         // want to provide their own binary or are in an environment where download fails.
         process.exit(0);

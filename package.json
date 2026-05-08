@@ -1,5 +1,5 @@
 {
-  "name": "@tryforge/forge.unsafe",
+  "name": "forge.unsafe",
   "version": "1.0.0",
   "description": "Real native memory management for ForgeScript via napi-rs — malloc, free, pointer arithmetic, typed reads/writes.",
   "main": "dist/index.js",
@@ -47,14 +47,10 @@
     "rust"
   ],
   "license": "GPL-3.0-or-later",
-  "peerDependencies": {
-    "@tryforge/forgescript": "*"
-  },
   "devDependencies": {
     "@napi-rs/cli": "^2.0.0",
-    "@tryforge/forgescript": "*",
+    "@tryforge/forgescript": "github:tryforge/forgescript#dev",
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
-  },
-  "dependencies": {}
+  }
 }

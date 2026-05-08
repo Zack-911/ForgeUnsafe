@@ -49,7 +49,7 @@ npm run build:ts
 
 ```ts
 import { ForgeClient } from '@tryforge/forgescript'
-import { ForgeUnsafe } from '@tryforge/forge.unsafe'
+import { ForgeUnsafe } from 'forge.unsafe'
 
 const unsafe = new ForgeUnsafe()
 
