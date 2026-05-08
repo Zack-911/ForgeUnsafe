@@ -69,7 +69,7 @@ function loadAddon(): NativeAddon {
         candidates.map(c => `  - ${c}`).join('\n') +
         ` \n\n` +
         `If you are using this as a dependency, try running:\n` +
-        `  node node_modules/@tryforge/forge.unsafe/scripts/install.js\n\n` +
+        `  node node_modules/forge.unsafe/scripts/install.js\n\n` +
         `If you are developing locally, run:\n` +
         `  npm run build:rust`
     )
