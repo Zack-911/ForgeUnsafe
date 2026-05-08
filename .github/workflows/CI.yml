@@ -57,7 +57,7 @@ jobs:
 
       - name: Build
         run: |
-          npx napi build --release --target ${{ matrix.settings.target }} --cargo-cwd rust
+          npx napi build --release --platform --target ${{ matrix.settings.target }} --cargo-cwd rust
           ls -R .
 
       - name: Upload artifact
