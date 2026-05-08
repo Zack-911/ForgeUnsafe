@@ -9,7 +9,8 @@
     "rust/src",
     "rust/Cargo.toml",
     "rust/build.rs",
-    "npm"
+    "npm",
+    "scripts"
   ],
   "scripts": {
     "build:rust": "cd rust && cargo build --release && node scripts/copy-addon.js",
